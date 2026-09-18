@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      # PROTOCOL.md section 8: FAILURES.md is generated, never hand-edited. If
+      # regenerating it from the committed results produces a diff, the file
+      # claims something the evidence does not support.
+      - name: FAILURES.md matches the committed results
+        run: python -m autopsy report --check

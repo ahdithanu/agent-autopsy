@@ -1,0 +1,7 @@
+# Exact pins. The full resolved set, direct and transitive, is recorded in
+# PROTOCOL.md section 9.
+PyYAML==6.0.3
+anthropic==1.6.0
+langgraph==1.2.11
+langsmith==0.12.6
+pytest==9.1.1

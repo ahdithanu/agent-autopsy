@@ -155,6 +155,56 @@ def test_case_validation_rejects_duplicate_ids(tmp_path):
     assert "duplicate id" in str(exit_info.value)
 
 
+def test_an_unstubbed_side_effecting_tool_refuses_the_batch(configured, monkeypatch):
+    module = runner.load_target("dummy")
+    monkeypatch.setattr(
+        module, "METADATA", dict(module.METADATA, side_effecting_tools=["send_email"])
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        runner.run("dummy", **configured)
+    message = str(exit_info.value)
+    assert "send_email" in message
+    assert "live service" in message
+    assert not os.path.exists(os.path.join(configured["results_dir"], "dummy.jsonl"))
+
+
+def test_a_stubbed_side_effecting_tool_is_allowed(configured, monkeypatch):
+    module = runner.load_target("dummy")
+    monkeypatch.setattr(
+        module, "METADATA", dict(module.METADATA, side_effecting_tools=["lookup"])
+    )
+    runner.run("dummy", case_id="null_value_reaches_user", **configured)
+    assert len(read(os.path.join(configured["results_dir"], "dummy.jsonl"))) == 5
+
+
+def test_an_undeclared_target_refuses_the_batch(configured, monkeypatch):
+    module = runner.load_target("dummy")
+    stripped = {k: v for k, v in module.METADATA.items() if k != "side_effecting_tools"}
+    monkeypatch.setattr(module, "METADATA", stripped)
+    with pytest.raises(SystemExit) as exit_info:
+        runner.run("dummy", **configured)
+    assert "must declare side_effecting_tools" in str(exit_info.value)
+
+
+def test_a_stub_that_did_not_apply_is_recorded_not_published(configured, monkeypatch):
+    """The pattern a real adapter follows when its monkeypatch misses."""
+
+    def stub_missed(payload, config):
+        raise runner.StubNotApplied("targets.agent.send_email is still the real tool")
+
+    module = runner.load_target("dummy")
+    monkeypatch.setattr(module, "invoke", stub_missed)
+    runner.run("dummy", case_id="null_value_reaches_user", **configured)
+    records = read(os.path.join(configured["results_dir"], "dummy.jsonl"))
+    assert all(r["outcome"] == "exception" for r in records)
+    assert all(r["exception"]["class"] == "StubNotApplied" for r in records)
+    assert all(r["passed"] is False for r in records)
+
+
+def test_the_shipped_dummy_declares_its_side_effects():
+    assert runner.load_target("dummy").METADATA["side_effecting_tools"] == []
+
+
 def test_shipped_cases_load():
     cases = runner.load_cases("dummy")
     assert {case["id"] for case in cases} == {

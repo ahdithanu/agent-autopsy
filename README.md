@@ -69,10 +69,19 @@ cases:
 ## Adding a target
 
 A module under `targets/` exposing `invoke(input, config)` and a `METADATA` dict
-with the repo URL, the pinned commit SHA and the install command. It is a thin
-adapter: it imports the agent under test, applies the case's tool stubs and
-injected state, and hands the config through so the recursion limit, the token
-ceiling and tracing reach the graph. `targets/dummy.py` is the worked example.
+with the repo URL, the pinned commit SHA, the install command and
+`side_effecting_tools`. It is a thin adapter: it imports the agent under test,
+applies the case's tool stubs and injected state, and hands the config through so
+the recursion limit, the token ceiling and tracing reach the graph.
+`targets/dummy.py` is the worked example.
+
+`side_effecting_tools` lists anything that writes a file, sends a request or
+changes state outside the process — `[]` if there is nothing, but the key is
+required. The runner refuses to run a case that leaves a declared tool unstubbed.
+Where the adapter stubs by replacing module attributes, it must also check the
+replacement took effect and raise `autopsy.runner.StubNotApplied` if it did not;
+the runner records that as the execution's outcome. A run that reached a live
+service is not evidence about the agent.
 
 ## What CI enforces
 

@@ -43,6 +43,9 @@ METADATA = {
     "sha": _sha(),
     "install": "pip install -r requirements.txt",
     "temperature_controllable": False,
+    # PROTOCOL.md section 4. Required, [] when the target touches nothing
+    # outside the process. The `lookup` tool here only returns the stub.
+    "side_effecting_tools": [],
     "note": "harness fixture, deliberately buggy; never publish findings about it",
 }
 
@@ -90,7 +93,14 @@ GRAPH = _build()
 
 
 def invoke(payload, config):
-    """Entry point the runner calls. Injected state from the case is applied here."""
+    """Entry point the runner calls. Injected state from the case is applied here.
+
+    This fixture reads its stub inside the node, so there is nothing to verify.
+    An adapter that stubs a real agent's tools by replacing module attributes
+    must check that the replacement took effect and raise
+    autopsy.runner.StubNotApplied if it did not, rather than letting the live
+    tool run.
+    """
     setup = (config.get("configurable") or {}).get("setup") or {}
     state: State = {
         "request": payload.get("request", ""),

@@ -46,6 +46,14 @@ class TokenCeilingExceeded(Exception):
     """The per-execution token ceiling was passed mid-run."""
 
 
+class StubNotApplied(Exception):
+    """An adapter's stub did not take effect, so the real tool would have run.
+
+    Adapters raise this instead of proceeding. PROTOCOL.md section 4: an
+    execution that reached a live service is not evidence about the agent.
+    """
+
+
 def is_infrastructure_error(exc):
     if isinstance(exc, INFRASTRUCTURE_ERRORS):
         return True
@@ -155,6 +163,36 @@ def load_target(name):
         if not hasattr(module, attribute):
             raise SystemExit(f"targets/{name}.py must expose {attribute}")
     return module
+
+
+def check_stubs(target, cases, name):
+    """Refuse the batch unless every declared side-effecting tool is stubbed.
+
+    PROTOCOL.md section 4. This catches the case author who forgot; an adapter
+    whose stub silently fails to apply is the adapter's job to catch, by raising
+    StubNotApplied.
+    """
+    declared = target.METADATA.get("side_effecting_tools")
+    if declared is None:
+        raise SystemExit(
+            f"targets/{name}.py: METADATA must declare side_effecting_tools "
+            "(an empty list if the target has none)"
+        )
+    if not isinstance(declared, (list, tuple)):
+        raise SystemExit(f"targets/{name}.py: side_effecting_tools must be a list")
+
+    missing = []
+    for case in cases:
+        stubbed = set(((case.get("setup") or {}).get("tool_stubs") or {}))
+        for tool in declared:
+            if tool not in stubbed:
+                missing.append((case["id"], tool))
+    if missing:
+        raise SystemExit(
+            "refusing to run: side-effecting tools are not stubbed, so these "
+            "executions could reach a live service (PROTOCOL.md section 4):\n"
+            + "\n".join(f"  {case_id}: {tool}" for case_id, tool in missing)
+        )
 
 
 def trace_url(run_id, cfg):
@@ -283,6 +321,7 @@ def run(target_name, case_id=None, results_dir="results", cases_dir="cases", env
         cases = [case for case in cases if case["id"] == case_id]
         if not cases:
             raise SystemExit(f"no case {case_id!r} in cases/{target_name}.yaml")
+    check_stubs(target, cases, target_name)
 
     batch = {
         "batch_id": str(uuid.uuid4()),

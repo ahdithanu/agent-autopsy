@@ -61,6 +61,24 @@ Ceilings are denominated in **tokens**, never dollars. This repository keeps no
 price table, because a stale price table would silently misstate published
 numbers.
 
+### Side-effecting tools must be stubbed
+
+Every adapter declares the target's side-effecting tools in
+`METADATA["side_effecting_tools"]`: anything that writes a file, sends a request,
+or changes state outside this process. The declaration is required; `[]` is a
+valid answer and an omitted key is an error.
+
+- The runner refuses to start a batch unless every declared tool is stubbed by
+  every case it is about to run.
+- An adapter whose stub fails to apply raises instead of letting the real tool
+  run. The runner records that as the execution's outcome, like any other
+  exception.
+
+**A finding is published only from executions in which every declared
+side-effecting tool was stubbed.** An agent that reached a live service was not
+running in this harness's environment, and whatever it did there is not evidence
+about the agent.
+
 ### Out of scope: wall-clock hangs
 
 The harness runs each execution **in process** and cannot interrupt a target

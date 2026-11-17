@@ -9,6 +9,7 @@ def observation(**overrides):
         "output": {"answer": "ok"},
         "steps": 2,
         "tokens": 100,
+        "tokens_measured": True,
         "aborted_by": None,
     }
     base.update(overrides)
@@ -84,3 +85,19 @@ def test_validate_accepts_the_six():
         {"type": "bounded_termination"},
     ):
         assertions.validate(assertion, "test")
+
+
+def test_contains_matches_non_ascii_text_as_written():
+    """Escaped to \\uXXXX the needle could never match, and not_contains would
+    pass without having looked."""
+    spoke_french = observation(output={"answer": "Désolé, aucun résultat"})
+    assert assertions.check({"type": "output_contains", "value": "Désolé"}, spoke_french)
+    assert not assertions.check({"type": "output_not_contains", "value": "Désolé"}, spoke_french)
+
+
+def test_token_cost_under_rejects_a_count_with_unreported_usage():
+    """A model call that reported no usage is missing from the total, so the
+    total is a lower bound and cannot show the run stayed under anything."""
+    unmetered = observation(tokens=0, tokens_measured=False)
+    assert not assertions.check({"type": "token_cost_under", "value": 10}, unmetered)
+    assert assertions.check({"type": "token_cost_under", "value": 200}, observation())

@@ -158,7 +158,7 @@ below is the full resolved environment, direct and transitive, on the platform
 it was resolved on. Findings record the versions in effect at run time; if they
 disagree with this list, the record wins and this list is stale.
 
-- Resolved: 2026-09-17
+- Resolved: 2026-11-17
 - Python: 3.13.5
 - Platform: macOS (darwin, arm64)
 
@@ -166,9 +166,9 @@ Direct:
 
 ```
 PyYAML==6.0.3
-anthropic==1.6.0
-langgraph==1.2.11
-langsmith==0.12.6
+anthropic==2.9.0
+langgraph==1.2.22
+langsmith==0.14.17
 pytest==9.1.1
 ```
 
@@ -182,47 +182,69 @@ Full resolved set:
 PyYAML==6.0.3
 Pygments==2.21.0
 annotated-types==0.8.0
-anthropic==1.6.0
-anyio==4.15.1
-certifi==2026.7.22
-charset-normalizer==3.5.1
+anthropic==2.9.0
+anyio==4.16.0
+beautifulsoup4==4.15.0
+bracex==3.2.3
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+cryptography==50.0.2
+deepagents==0.7.39
 distro==1.9.0
 docstring_parser==0.18.0
+filetype==1.2.0
+google-auth==2.62.2
+google-genai==3.4.0
 h11==0.16.0
 httpcore==1.0.9
-httpcore2==2.13.0
+httpcore2==2.16.2
 httpx==0.28.1
-httpx2==2.13.0
+httpx2==2.16.2
 idna==3.20
-iniconfig==2.3.0
-jiter==0.17.0
-jsonpatch==1.33
-jsonpointer==3.1.1
-langchain-core==1.6.3
-langchain-protocol==0.0.19
-langgraph==1.2.11
-langgraph-checkpoint==4.2.0
-langgraph-prebuilt==1.1.0
-langgraph-sdk==0.4.4
-langsmith==0.12.6
-orjson==3.12.0
-ormsgpack==1.12.2
+iniconfig==2.3.1
+jiter==0.19.0
+jsonpatch==1.47
+jsonpointer==3.12
+langchain==1.5.0
+langchain-anthropic==1.7.10
+langchain-core==1.8.1
+langchain-google-genai==4.5.0
+langchain-protocol==0.0.21
+langgraph==1.2.22
+langgraph-checkpoint==4.3.2
+langgraph-prebuilt==1.1.2
+langgraph-sdk==0.4.14
+langsmith==0.14.17
+markdownify==1.2.3
+opentelemetry-api==1.45.2
+orjson==3.13.0
+ormsgpack==1.13.1
 packaging==26.3
-pluggy==1.6.0
-pydantic==2.13.5
-pydantic_core==2.46.5
+pluggy==1.7.0
+pyasn1==0.6.5
+pyasn1_modules==0.4.2
+pycparser==3.12
+pydantic==2.14.3
+pydantic_core==2.50.4
 pytest==9.1.1
+regex==2026.11.15
 requests==2.34.2
 requests-toolbelt==1.0.0
+six==1.17.0
 sniffio==1.3.1
+soupsieve==4.1.1
+tavily-python==0.8.5
 tenacity==9.1.4
-truststore==0.10.4
-typing-inspection==0.4.4
+tiktoken==0.14.0
+truststore==0.10.5
+typing-inspection==0.4.5
 typing_extensions==4.16.0
 urllib3==2.8.0
-uuid_utils==0.17.1
-websockets==16.1.1
-xxhash==4.0.1
+uuid_utils==0.19.0
+wcmatch==12.0.3
+websockets==17.4
+xxhash==4.1.0
 zstandard==0.25.0
 ```
 

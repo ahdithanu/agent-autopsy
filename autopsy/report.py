@@ -67,7 +67,14 @@ def latest_batches(executions):
 
 def _provenance(records):
     """The batch's shared provenance, or None if the batch disagrees with itself."""
-    keys = ("target_sha", "model", "temperature_controllable", "versions", "target_repo")
+    keys = (
+        "target_sha",
+        "model",
+        "temperature",
+        "temperature_controllable",
+        "versions",
+        "target_repo",
+    )
     first = {key: records[0].get(key) for key in keys}
     for record in records[1:]:
         if {key: record.get(key) for key in keys} != first:
@@ -110,6 +117,12 @@ def analyze(results_dir="results"):
             "expected_safe": records[0]["expected_safe"],
             "batch_id": records[0]["batch_id"],
         }
+        # A harness fixture is deliberately broken. Its failures say nothing
+        # about any agent, so they are never findings.
+        if any(r.get("fixture") for r in records):
+            entry["reason"] = "harness fixture, never published"
+            excluded.append(entry)
+            continue
         if any(r["infrastructure_error"] for r in records):
             kinds = sorted(
                 {r["exception"]["class"] for r in records if r["infrastructure_error"]}
@@ -121,9 +134,23 @@ def analyze(results_dir="results"):
             entry["reason"] = f"{len(records)} of {RUNS_PER_CASE} executions"
             excluded.append(entry)
             continue
+        # PROTOCOL.md section 4: a finding is published only from executions in
+        # which every declared side-effecting tool was stubbed.
+        unstubbed = [
+            r for r in records if (r.get("exception") or {}).get("class") == "StubNotApplied"
+        ]
+        if unstubbed:
+            entry["reason"] = f"stub not applied in {len(unstubbed)} of {len(records)} executions"
+            excluded.append(entry)
+            continue
         provenance = _provenance(records)
         if provenance is None:
             entry["reason"] = "batch disagrees with itself on SHA, model or versions"
+            excluded.append(entry)
+            continue
+        # PROTOCOL.md section 3: no resolvable target SHA, no finding.
+        if not provenance["target_sha"]:
+            entry["reason"] = "no target SHA recorded"
             excluded.append(entry)
             continue
         entry["provenance"] = provenance
@@ -170,18 +197,23 @@ def render(analysis):
         for entry in entries:
             provenance = entry["provenance"]
             model = provenance["model"]
-            model += " @ temp 0" if provenance["temperature_controllable"] else " (temp not settable)"
-            sha = provenance["target_sha"] or "unrecorded"
+            if provenance["temperature_controllable"]:
+                model += " @ temp 0"
+            elif provenance["temperature"] is not None:
+                model += f" @ temp {provenance['temperature']} (not settable)"
+            else:
+                model += " (temp not settable)"
             lines.append(
                 "| `{case}` | {category} | **{k}/{n}** | `{assertion}` | {model} | {versions} | `{sha}` | {traces} |\n".format(
                     case=entry["case_id"],
                     category=entry["category"],
                     k=entry["failures"],
                     n=RUNS_PER_CASE,
-                    assertion=assertions.describe(entry["assertion"]),
+                    # A literal pipe would end the table cell early.
+                    assertion=assertions.describe(entry["assertion"]).replace("|", "\\|"),
                     model=model,
                     versions=_versions_cell(provenance["versions"]),
-                    sha=sha[:12] if sha != "unrecorded" else sha,
+                    sha=provenance["target_sha"][:12],
                     traces=_traces_cell(entry["records"]),
                 )
             )

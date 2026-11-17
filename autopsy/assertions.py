@@ -9,11 +9,14 @@ An observation has:
     output      any   -- the target's return value, None if it raised
     steps       int   -- highest observed langgraph_step
     tokens      int   -- total tokens across model calls
+    tokens_measured  bool  -- every model call reported its token usage
     aborted_by  str   -- None, "recursion_limit" or "token_ceiling"
 
 A run that raised produced no output, and a run a ceiling aborted produced step
 and token counts that are lower bounds rather than measurements. Both are
-handled by requiring `completed` everywhere except bounded_termination.
+handled by requiring `completed` everywhere except bounded_termination. A model
+call that reported no usage leaves the token count a lower bound in the same
+way, so token_cost_under also requires `tokens_measured`.
 """
 
 import json
@@ -29,7 +32,10 @@ VALUE_TYPES = {
 
 
 def serialize(output):
-    return json.dumps(output, default=str, sort_keys=True)
+    # ensure_ascii=False keeps non-ASCII text as written. Escaped to \uXXXX, a
+    # needle like "café" could never match, and output_not_contains would pass
+    # without having looked.
+    return json.dumps(output, default=str, sort_keys=True, ensure_ascii=False)
 
 
 def output_contains(observation, value):
@@ -49,7 +55,11 @@ def step_count_under(observation, value):
 
 
 def token_cost_under(observation, value):
-    return observation["completed"] and observation["tokens"] < value
+    return (
+        observation["completed"]
+        and observation["tokens_measured"]
+        and observation["tokens"] < value
+    )
 
 
 def bounded_termination(observation, value):

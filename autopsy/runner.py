@@ -13,6 +13,7 @@ import traceback
 import uuid
 
 import anthropic
+import httpx
 import yaml
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphRecursionError
@@ -39,7 +40,15 @@ INFRASTRUCTURE_ERRORS = (
     anthropic.PermissionDeniedError,
     anthropic.RateLimitError,
     anthropic.InternalServerError,
+    # Connection failures and timeouts from any SDK built on httpx, which is
+    # how a provider other than Anthropic is recognised without importing it.
+    httpx.TransportError,
 )
+
+# The same four conditions by HTTP status, for SDKs whose classes are not named
+# above: authentication, permission, request timeout, rate limit. Any 5xx
+# counts as well.
+INFRASTRUCTURE_STATUS_CODES = (401, 403, 408, 429)
 
 
 class TokenCeilingExceeded(Exception):
@@ -54,11 +63,26 @@ class StubNotApplied(Exception):
     """
 
 
-def is_infrastructure_error(exc):
+def _is_infrastructure(exc):
     if isinstance(exc, INFRASTRUCTURE_ERRORS):
         return True
     status = getattr(exc, "status_code", None)
-    return isinstance(status, int) and status >= 500
+    return isinstance(status, int) and (status in INFRASTRUCTURE_STATUS_CODES or status >= 500)
+
+
+def is_infrastructure_error(exc):
+    """True if exc, or anything it was raised from, is an infrastructure error.
+
+    The chain is followed because an agent that catches a 429 and raises its
+    own error has still only told us about the provider.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if _is_infrastructure(exc):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 class BudgetHandler(BaseCallbackHandler):
@@ -76,6 +100,9 @@ class BudgetHandler(BaseCallbackHandler):
         self.output_tokens = 0
         self.steps = 0
         self.model_calls = 0
+        # Model calls that reported no usage. Their tokens are missing from the
+        # totals, so neither ceiling could act on them.
+        self.unmetered_calls = 0
 
     @property
     def tokens(self):
@@ -89,6 +116,8 @@ class BudgetHandler(BaseCallbackHandler):
     def on_llm_end(self, response, **kwargs):
         self.model_calls += 1
         usage = _usage(response)
+        if usage == (0, 0):
+            self.unmetered_calls += 1
         self.input_tokens += usage[0]
         self.output_tokens += usage[1]
         if self.tokens > self.token_ceiling:
@@ -149,7 +178,10 @@ def load_cases(target, cases_dir="cases"):
             assertions.validate(case["assertion"], f"{path}: case {case['id']}")
         except ValueError as exc:
             raise SystemExit(str(exc))
-        case.setdefault("setup", {})
+        if case.get("setup") is None:
+            case["setup"] = {}
+        elif not isinstance(case["setup"], dict):
+            raise SystemExit(f"{where}: setup must be a mapping, got {case['setup']!r}")
         cases.append(case)
     return cases
 
@@ -158,6 +190,9 @@ def load_target(name):
     try:
         module = importlib.import_module(f"targets.{name}")
     except ModuleNotFoundError as exc:
+        if exc.name not in ("targets", f"targets.{name}"):
+            # The adapter is there; something it imports is not installed.
+            raise SystemExit(f"targets/{name}.py failed to import: {exc}")
         raise SystemExit(f"no adapter at targets/{name}.py ({exc})")
     for attribute in ("invoke", "METADATA"):
         if not hasattr(module, attribute):
@@ -195,6 +230,22 @@ def check_stubs(target, cases, name):
         )
 
 
+def check_temperature(target, name):
+    """Refuse the batch unless the temperature in effect can be recorded.
+
+    PROTOCOL.md section 2: where the target does not expose temperature, the
+    value actually used is recorded. The runner cannot observe it, so the
+    adapter declares it. None is the answer for a target that calls no model.
+    """
+    if target.METADATA.get("temperature_controllable"):
+        return
+    if "temperature" not in target.METADATA:
+        raise SystemExit(
+            f"targets/{name}.py: temperature is not controllable, so METADATA must "
+            "declare the temperature the target actually uses (None if it calls no model)"
+        )
+
+
 def trace_url(run_id, cfg):
     """(url, reason). A URL that cannot be resolved is recorded, not raised."""
     if not cfg["tracing"]:
@@ -227,6 +278,18 @@ def execute_once(target, case, cfg, batch, attempt):
         "recursion_limit": cfg["recursion_limit"],
         "callbacks": [handler],
         "run_id": run_id,
+        # Labels on the LangSmith trace, so a batch or a case can be filtered
+        # for there instead of looked up one run id at a time.
+        "run_name": f"{batch['target']}/{case['id']} {attempt}/{RUNS_PER_CASE}",
+        "tags": ["agent-autopsy", f"target:{batch['target']}", f"case:{case['id']}"],
+        "metadata": {
+            "autopsy_batch_id": batch["batch_id"],
+            "autopsy_target": batch["target"],
+            "autopsy_case_id": case["id"],
+            "autopsy_category": case["category"],
+            "autopsy_attempt": attempt,
+            "autopsy_target_sha": target.METADATA.get("sha"),
+        },
         "configurable": {
             "model": cfg["model"],
             "provider": cfg["provider"],
@@ -253,6 +316,7 @@ def execute_once(target, case, cfg, batch, attempt):
         "output": output,
         "steps": handler.steps,
         "tokens": handler.tokens,
+        "tokens_measured": handler.unmetered_calls == 0,
         "aborted_by": aborted_by,
     }
     url, url_error = trace_url(run_id, cfg)
@@ -262,6 +326,7 @@ def execute_once(target, case, cfg, batch, attempt):
         "batch_id": batch["batch_id"],
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "target": batch["target"],
+        "fixture": bool(target.METADATA.get("fixture")),
         "case_id": case["id"],
         "category": case["category"],
         "attempt": attempt,
@@ -287,6 +352,7 @@ def execute_once(target, case, cfg, batch, attempt):
             "input": handler.input_tokens,
             "output": handler.output_tokens,
             "total": handler.tokens,
+            "unmetered_model_calls": handler.unmetered_calls,
         },
         "duration_s": round(duration, 3),
         "langsmith_run_id": str(run_id),
@@ -297,7 +363,7 @@ def execute_once(target, case, cfg, batch, attempt):
         "target_sha": target.METADATA.get("sha"),
         "model": cfg["model"],
         "provider": cfg["provider"],
-        "temperature": 0 if controllable else None,
+        "temperature": 0 if controllable else target.METADATA.get("temperature"),
         "temperature_controllable": controllable,
         "recursion_limit": cfg["recursion_limit"],
         "token_ceiling": cfg["token_ceiling"],
@@ -318,15 +384,17 @@ def run(target_name, case_id=None, results_dir="results", cases_dir="cases", env
     target = load_target(target_name)
     cases = load_cases(target_name, cases_dir)
     if case_id is not None:
-        cases = [case for case in cases if case["id"] == case_id]
+        # str(): YAML reads `id: 41` as an integer, and --case is always text.
+        cases = [case for case in cases if str(case["id"]) == case_id]
         if not cases:
             raise SystemExit(f"no case {case_id!r} in cases/{target_name}.yaml")
     check_stubs(target, cases, target_name)
+    check_temperature(target, target_name)
 
     batch = {
         "batch_id": str(uuid.uuid4()),
         "target": target_name,
-        "versions": env.versions(),
+        "versions": env.versions(target.METADATA.get("packages") or ()),
     }
     os.makedirs(results_dir, exist_ok=True)
     path = os.path.join(results_dir, f"{target_name}.jsonl")
@@ -365,6 +433,11 @@ def run(target_name, case_id=None, results_dir="results", cases_dir="cases", env
             detail = record["outcome"]
             if record["infrastructure_error"]:
                 detail += " (infrastructure)"
+            if record["tokens"]["unmetered_model_calls"]:
+                detail += (
+                    f" ({record['tokens']['unmetered_model_calls']} model call(s) reported"
+                    " no token usage; the ceilings could not count them)"
+                )
             print(f"  {case['id']} {attempt}/{RUNS_PER_CASE}  {mark}  {detail}")
 
     print(f"\nwrote {path}  tokens {spent}")

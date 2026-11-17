@@ -56,20 +56,26 @@ def config(path=".env"):
         try:
             cfg[key.lower()] = int(raw)
         except ValueError:
-            raise SystemExit(f"{key} must be an integer number of tokens, got {raw!r}")
+            raise SystemExit(f"{key} must be an integer, got {raw!r}")
         if cfg[key.lower()] <= 0:
             raise SystemExit(f"{key} must be positive, got {raw!r}")
 
-    cfg["tracing"] = os.environ.get("LANGSMITH_TRACING", "").lower() == "true"
+    # Exact match, because that is what langsmith itself does: "True" leaves
+    # tracing off there, and the record must not claim it was on.
+    cfg["tracing"] = os.environ.get("LANGSMITH_TRACING", "") == "true"
     cfg["langsmith_project"] = os.environ.get("LANGSMITH_PROJECT") or None
     cfg["langsmith_api_key_present"] = bool(os.environ.get("LANGSMITH_API_KEY"))
     return cfg
 
 
-def versions():
-    """Installed versions of everything a finding is conditioned on."""
+def versions(extra=()):
+    """Installed versions of everything a finding is conditioned on.
+
+    `extra` is the adapter's own list (METADATA["packages"]): the libraries the
+    target is built on, which the harness cannot know in advance.
+    """
     found = {}
-    for name in RECORDED_PACKAGES:
+    for name in (*RECORDED_PACKAGES, *extra):
         try:
             found[name.replace("-", "_")] = metadata.version(name)
         except metadata.PackageNotFoundError:

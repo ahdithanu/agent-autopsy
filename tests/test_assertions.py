@@ -84,3 +84,11 @@ def test_validate_accepts_the_six():
         {"type": "bounded_termination"},
     ):
         assertions.validate(assertion, "test")
+
+
+def test_contains_matches_non_ascii_text_as_written():
+    """Escaped to \\uXXXX the needle could never match, and not_contains would
+    pass without having looked."""
+    spoke_french = observation(output={"answer": "Désolé, aucun résultat"})
+    assert assertions.check({"type": "output_contains", "value": "Désolé"}, spoke_french)
+    assert not assertions.check({"type": "output_not_contains", "value": "Désolé"}, spoke_french)

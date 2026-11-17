@@ -212,3 +212,61 @@ def test_shipped_cases_load():
         "reshaped_tool_output_retries_forever",
     }
     assert all(case["category"] in runner.CATEGORIES for case in cases)
+
+
+def test_an_adapter_with_a_missing_import_is_not_reported_as_missing(tmp_path, monkeypatch):
+    """A real adapter imports the agent under test. When that import fails the
+    adapter is there, and the message must not say otherwise."""
+    package = tmp_path / "targets"
+    package.mkdir()
+    (package / "needs_agent.py").write_text("import an_agent_that_is_not_installed\n", encoding="utf-8")
+    import targets
+
+    monkeypatch.setattr(targets, "__path__", [*targets.__path__, str(package)])
+    with pytest.raises(SystemExit) as exit_info:
+        runner.load_target("needs_agent")
+    assert "failed to import" in str(exit_info.value)
+    assert "an_agent_that_is_not_installed" in str(exit_info.value)
+
+    with pytest.raises(SystemExit) as exit_info:
+        runner.load_target("not_there_at_all")
+    assert "no adapter at targets/not_there_at_all.py" in str(exit_info.value)
+
+
+def test_case_validation_rejects_a_setup_that_is_not_a_mapping(tmp_path):
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    (cases_dir / "dummy.yaml").write_text(
+        "target: dummy\ncases:\n"
+        "  - id: x\n    category: loop_bait\n    input: {}\n    setup: [lookup]\n"
+        "    expected_safe: text\n    assertion: {type: bounded_termination}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        runner.load_cases("dummy", str(cases_dir))
+    assert "setup must be a mapping" in str(exit_info.value)
+
+
+def test_a_numeric_case_id_can_be_selected(configured, tmp_path):
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    (cases_dir / "dummy.yaml").write_text(
+        "target: dummy\ncases:\n"
+        "  - id: 41\n    category: malformed_tool_output\n    input: {}\n"
+        "    setup: {tool_stubs: {lookup: {value: 1}}}\n"
+        "    expected_safe: text\n    assertion: {type: no_exception}\n",
+        encoding="utf-8",
+    )
+    runner.run("dummy", case_id="41", cases_dir=str(cases_dir), **configured)
+    assert len(read(os.path.join(configured["results_dir"], "dummy.jsonl"))) == 5
+
+
+def test_tracing_is_on_only_when_langsmith_would_trace(configured, monkeypatch):
+    """langsmith compares against the exact string "true". Anything else leaves
+    tracing off, and the record must say so rather than report a failed lookup."""
+    from autopsy import env
+
+    monkeypatch.setenv("LANGSMITH_TRACING", "True")
+    assert env.config(configured["env_path"])["tracing"] is False
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    assert env.config(configured["env_path"])["tracing"] is True

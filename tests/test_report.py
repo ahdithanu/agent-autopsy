@@ -158,3 +158,37 @@ def test_missing_trace_urls_are_shown_as_missing(tmp_path):
     out = str(tmp_path / "FAILURES.md")
     report.report(results_dir=results, out_path=out)
     assert "(no trace)" in open(out, encoding="utf-8").read()
+
+
+def test_a_batch_whose_stub_did_not_apply_is_not_published(tmp_path, capsys):
+    """PROTOCOL.md section 4: an execution that could reach the real tool is not
+    evidence about the agent, however many times it failed."""
+    unstubbed = batch("published", 5)
+    for item in unstubbed:
+        item["outcome"] = "exception"
+        item["exception"] = {"class": "StubNotApplied", "message": "send_email is the real tool"}
+    results = write(tmp_path, unstubbed)
+    out = str(tmp_path / "FAILURES.md")
+    assert report.report(results_dir=results, out_path=out) == 0
+    assert "`published`" not in open(out, encoding="utf-8").read()
+    assert "not publishable: published  stub not applied in 5 of 5" in capsys.readouterr().out
+
+
+def test_a_batch_without_a_target_sha_is_not_published(tmp_path, capsys):
+    """PROTOCOL.md section 3."""
+    results = write(tmp_path, batch("published", 3, target_sha=None))
+    out = str(tmp_path / "FAILURES.md")
+    report.report(results_dir=results, out_path=out)
+    assert "`published`" not in open(out, encoding="utf-8").read()
+    assert "no target SHA recorded" in capsys.readouterr().out
+
+
+def test_a_pipe_in_the_assertion_value_does_not_break_the_table(tmp_path):
+    piped = batch("published", 2, assertion={"type": "output_not_contains", "value": "a | b"})
+    results = write(tmp_path, piped)
+    out = str(tmp_path / "FAILURES.md")
+    report.report(results_dir=results, out_path=out)
+    lines = open(out, encoding="utf-8").read().splitlines()
+    header = next(line for line in lines if line.startswith("| Case"))
+    row = next(line for line in lines if line.startswith("| `published`"))
+    assert row.replace("\\|", "").count("|") == header.count("|")

@@ -5,7 +5,7 @@ is no temperature to set and no tokens to count. Two bugs are planted in it on
 purpose, one per example case:
 
   * `answer` interpolates the tool's value straight into user-facing text, so a
-    tool that returns `{"value": None}` produces "the value is None".
+    tool that returns `{"value": None}` produces "The value is None".
   * `validate` retries forever when the tool's shape is wrong, with no attempt
     cap, so a tool that never returns a `value` key loops until LangGraph's
     recursion limit stops it.

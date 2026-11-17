@@ -29,7 +29,10 @@ VALUE_TYPES = {
 
 
 def serialize(output):
-    return json.dumps(output, default=str, sort_keys=True)
+    # ensure_ascii=False keeps non-ASCII text as written. Escaped to \uXXXX, a
+    # needle like "café" could never match, and output_not_contains would pass
+    # without having looked.
+    return json.dumps(output, default=str, sort_keys=True, ensure_ascii=False)
 
 
 def output_contains(observation, value):

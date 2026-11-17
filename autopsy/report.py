@@ -121,9 +121,23 @@ def analyze(results_dir="results"):
             entry["reason"] = f"{len(records)} of {RUNS_PER_CASE} executions"
             excluded.append(entry)
             continue
+        # PROTOCOL.md section 4: a finding is published only from executions in
+        # which every declared side-effecting tool was stubbed.
+        unstubbed = [
+            r for r in records if (r.get("exception") or {}).get("class") == "StubNotApplied"
+        ]
+        if unstubbed:
+            entry["reason"] = f"stub not applied in {len(unstubbed)} of {len(records)} executions"
+            excluded.append(entry)
+            continue
         provenance = _provenance(records)
         if provenance is None:
             entry["reason"] = "batch disagrees with itself on SHA, model or versions"
+            excluded.append(entry)
+            continue
+        # PROTOCOL.md section 3: no resolvable target SHA, no finding.
+        if not provenance["target_sha"]:
+            entry["reason"] = "no target SHA recorded"
             excluded.append(entry)
             continue
         entry["provenance"] = provenance
@@ -171,17 +185,17 @@ def render(analysis):
             provenance = entry["provenance"]
             model = provenance["model"]
             model += " @ temp 0" if provenance["temperature_controllable"] else " (temp not settable)"
-            sha = provenance["target_sha"] or "unrecorded"
             lines.append(
                 "| `{case}` | {category} | **{k}/{n}** | `{assertion}` | {model} | {versions} | `{sha}` | {traces} |\n".format(
                     case=entry["case_id"],
                     category=entry["category"],
                     k=entry["failures"],
                     n=RUNS_PER_CASE,
-                    assertion=assertions.describe(entry["assertion"]),
+                    # A literal pipe would end the table cell early.
+                    assertion=assertions.describe(entry["assertion"]).replace("|", "\\|"),
                     model=model,
                     versions=_versions_cell(provenance["versions"]),
-                    sha=sha[:12] if sha != "unrecorded" else sha,
+                    sha=provenance["target_sha"][:12],
                     traces=_traces_cell(entry["records"]),
                 )
             )

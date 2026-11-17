@@ -149,7 +149,10 @@ def load_cases(target, cases_dir="cases"):
             assertions.validate(case["assertion"], f"{path}: case {case['id']}")
         except ValueError as exc:
             raise SystemExit(str(exc))
-        case.setdefault("setup", {})
+        if case.get("setup") is None:
+            case["setup"] = {}
+        elif not isinstance(case["setup"], dict):
+            raise SystemExit(f"{where}: setup must be a mapping, got {case['setup']!r}")
         cases.append(case)
     return cases
 
@@ -158,6 +161,9 @@ def load_target(name):
     try:
         module = importlib.import_module(f"targets.{name}")
     except ModuleNotFoundError as exc:
+        if exc.name not in ("targets", f"targets.{name}"):
+            # The adapter is there; something it imports is not installed.
+            raise SystemExit(f"targets/{name}.py failed to import: {exc}")
         raise SystemExit(f"no adapter at targets/{name}.py ({exc})")
     for attribute in ("invoke", "METADATA"):
         if not hasattr(module, attribute):
@@ -318,7 +324,8 @@ def run(target_name, case_id=None, results_dir="results", cases_dir="cases", env
     target = load_target(target_name)
     cases = load_cases(target_name, cases_dir)
     if case_id is not None:
-        cases = [case for case in cases if case["id"] == case_id]
+        # str(): YAML reads `id: 41` as an integer, and --case is always text.
+        cases = [case for case in cases if str(case["id"]) == case_id]
         if not cases:
             raise SystemExit(f"no case {case_id!r} in cases/{target_name}.yaml")
     check_stubs(target, cases, target_name)

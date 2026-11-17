@@ -67,7 +67,14 @@ def latest_batches(executions):
 
 def _provenance(records):
     """The batch's shared provenance, or None if the batch disagrees with itself."""
-    keys = ("target_sha", "model", "temperature_controllable", "versions", "target_repo")
+    keys = (
+        "target_sha",
+        "model",
+        "temperature",
+        "temperature_controllable",
+        "versions",
+        "target_repo",
+    )
     first = {key: records[0].get(key) for key in keys}
     for record in records[1:]:
         if {key: record.get(key) for key in keys} != first:
@@ -110,6 +117,12 @@ def analyze(results_dir="results"):
             "expected_safe": records[0]["expected_safe"],
             "batch_id": records[0]["batch_id"],
         }
+        # A harness fixture is deliberately broken. Its failures say nothing
+        # about any agent, so they are never findings.
+        if any(r.get("fixture") for r in records):
+            entry["reason"] = "harness fixture, never published"
+            excluded.append(entry)
+            continue
         if any(r["infrastructure_error"] for r in records):
             kinds = sorted(
                 {r["exception"]["class"] for r in records if r["infrastructure_error"]}
@@ -184,7 +197,12 @@ def render(analysis):
         for entry in entries:
             provenance = entry["provenance"]
             model = provenance["model"]
-            model += " @ temp 0" if provenance["temperature_controllable"] else " (temp not settable)"
+            if provenance["temperature_controllable"]:
+                model += " @ temp 0"
+            elif provenance["temperature"] is not None:
+                model += f" @ temp {provenance['temperature']} (not settable)"
+            else:
+                model += " (temp not settable)"
             lines.append(
                 "| `{case}` | {category} | **{k}/{n}** | `{assertion}` | {model} | {versions} | `{sha}` | {traces} |\n".format(
                     case=entry["case_id"],

@@ -68,10 +68,14 @@ def config(path=".env"):
     return cfg
 
 
-def versions():
-    """Installed versions of everything a finding is conditioned on."""
+def versions(extra=()):
+    """Installed versions of everything a finding is conditioned on.
+
+    `extra` is the adapter's own list (METADATA["packages"]): the libraries the
+    target is built on, which the harness cannot know in advance.
+    """
     found = {}
-    for name in RECORDED_PACKAGES:
+    for name in (*RECORDED_PACKAGES, *extra):
         try:
             found[name.replace("-", "_")] = metadata.version(name)
         except metadata.PackageNotFoundError:

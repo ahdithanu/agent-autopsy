@@ -43,6 +43,11 @@ METADATA = {
     "sha": _sha(),
     "install": "pip install -r requirements.txt",
     "temperature_controllable": False,
+    # PROTOCOL.md section 2. Required when temperature is not controllable: the
+    # value the target actually uses. None here because no model is called.
+    "temperature": None,
+    # Marks this as a harness fixture. `autopsy report` never publishes one.
+    "fixture": True,
     # PROTOCOL.md section 4. Required, [] when the target touches nothing
     # outside the process. The `lookup` tool here only returns the stub.
     "side_effecting_tools": [],

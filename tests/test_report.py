@@ -192,3 +192,19 @@ def test_a_pipe_in_the_assertion_value_does_not_break_the_table(tmp_path):
     header = next(line for line in lines if line.startswith("| Case"))
     row = next(line for line in lines if line.startswith("| `published`"))
     assert row.replace("\\|", "").count("|") == header.count("|")
+
+
+def test_a_fixture_is_never_published(tmp_path, capsys):
+    results = write(tmp_path, batch("published", 5, fixture=True))
+    out = str(tmp_path / "FAILURES.md")
+    assert report.report(results_dir=results, out_path=out) == 0
+    assert "`published`" not in open(out, encoding="utf-8").read()
+    assert "not publishable: published  harness fixture" in capsys.readouterr().out
+
+
+def test_a_temperature_that_cannot_be_set_is_printed_when_known(tmp_path):
+    fixed = batch("published", 3, temperature_controllable=False, temperature=0.7)
+    results = write(tmp_path, fixed)
+    out = str(tmp_path / "FAILURES.md")
+    report.report(results_dir=results, out_path=out)
+    assert "@ temp 0.7 (not settable)" in open(out, encoding="utf-8").read()

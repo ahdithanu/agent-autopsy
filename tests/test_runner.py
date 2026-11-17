@@ -270,3 +270,134 @@ def test_tracing_is_on_only_when_langsmith_would_trace(configured, monkeypatch):
     assert env.config(configured["env_path"])["tracing"] is False
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     assert env.config(configured["env_path"])["tracing"] is True
+
+
+def http_error(status):
+    """An exception shaped like any SDK's HTTP error: it carries status_code."""
+    error = RuntimeError(f"HTTP {status}")
+    error.status_code = status
+    return error
+
+
+@pytest.mark.parametrize("status", [401, 403, 408, 429, 500, 503, 529])
+def test_infrastructure_errors_are_recognised_by_status_for_any_provider(status):
+    assert runner.is_infrastructure_error(http_error(status))
+
+
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_a_bad_request_is_not_an_infrastructure_error(status):
+    """A 400 is the agent sending something the provider rejected. That is a
+    result, not a reason to discard the batch."""
+    assert not runner.is_infrastructure_error(http_error(status))
+
+
+def test_connection_failures_from_any_httpx_sdk_are_infrastructure_errors():
+    import httpx
+
+    assert runner.is_infrastructure_error(httpx.ConnectTimeout("timed out"))
+    assert not runner.is_infrastructure_error(ValueError("adapter blew up"))
+
+
+def test_a_wrapped_infrastructure_error_is_still_one():
+    """The agent caught a 429 and raised its own error. The batch still only
+    says something about the provider."""
+    try:
+        try:
+            raise http_error(429)
+        except RuntimeError as rate_limited:
+            raise ValueError("agent gave up") from rate_limited
+    except ValueError as wrapped:
+        assert runner.is_infrastructure_error(wrapped)
+
+    try:
+        try:
+            raise http_error(429)
+        except RuntimeError:
+            raise ValueError("agent gave up")  # implicit chaining, no `from`
+    except ValueError as wrapped:
+        assert runner.is_infrastructure_error(wrapped)
+
+
+def model_result(usage):
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    return LLMResult(generations=[[ChatGeneration(message=AIMessage(content="x", usage_metadata=usage))]])
+
+
+def test_a_model_call_that_reports_no_usage_is_counted_as_unmetered():
+    handler = runner.BudgetHandler(token_ceiling=1000)
+    handler.on_llm_end(model_result({"input_tokens": 30, "output_tokens": 12, "total_tokens": 42}))
+    assert (handler.tokens, handler.unmetered_calls) == (42, 0)
+    handler.on_llm_end(model_result(None))
+    assert (handler.tokens, handler.model_calls, handler.unmetered_calls) == (42, 2, 1)
+
+
+def test_unreported_usage_is_recorded_and_fails_token_cost_under(configured, monkeypatch, tmp_path):
+    """Without this the run records 0 tokens, passes token_cost_under, and
+    neither ceiling can ever stop it."""
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    (cases_dir / "dummy.yaml").write_text(
+        "target: dummy\ncases:\n"
+        "  - id: cheap\n    category: cost_blowup\n    input: {}\n"
+        "    expected_safe: text\n    assertion: {type: token_cost_under, value: 100}\n",
+        encoding="utf-8",
+    )
+
+    def silent_model(payload, config):
+        for handler in config["callbacks"]:
+            handler.on_llm_end(model_result(None))
+        return {"answer": "ok"}
+
+    module = runner.load_target("dummy")
+    monkeypatch.setattr(module, "invoke", silent_model)
+    runner.run("dummy", cases_dir=str(cases_dir), **configured)
+    records = read(os.path.join(configured["results_dir"], "dummy.jsonl"))
+    assert all(r["tokens"]["unmetered_model_calls"] == 1 for r in records)
+    assert all(r["passed"] is False for r in records)
+
+
+def test_an_uncontrollable_target_must_declare_its_temperature(configured, monkeypatch):
+    module = runner.load_target("dummy")
+    stripped = {k: v for k, v in module.METADATA.items() if k != "temperature"}
+    monkeypatch.setattr(module, "METADATA", stripped)
+    with pytest.raises(SystemExit) as exit_info:
+        runner.run("dummy", **configured)
+    assert "must declare the temperature" in str(exit_info.value)
+    assert not os.path.exists(os.path.join(configured["results_dir"], "dummy.jsonl"))
+
+
+def test_the_declared_temperature_is_recorded(configured, monkeypatch):
+    module = runner.load_target("dummy")
+    monkeypatch.setattr(module, "METADATA", dict(module.METADATA, temperature=0.7))
+    runner.run("dummy", case_id="null_value_reaches_user", **configured)
+    records = read(os.path.join(configured["results_dir"], "dummy.jsonl"))
+    assert all(r["temperature"] == 0.7 and r["temperature_controllable"] is False for r in records)
+
+
+def test_the_dummy_is_recorded_as_a_fixture(configured):
+    runner.run("dummy", case_id="null_value_reaches_user", **configured)
+    records = read(os.path.join(configured["results_dir"], "dummy.jsonl"))
+    assert all(r["fixture"] is True for r in records)
+
+
+def test_traces_are_labelled_with_batch_case_and_attempt(configured, monkeypatch):
+    """What makes a batch findable in LangSmith without its run ids."""
+    seen = []
+
+    def capture(payload, config):
+        seen.append(config)
+        return {"answer": "ok"}
+
+    module = runner.load_target("dummy")
+    monkeypatch.setattr(module, "invoke", capture)
+    runner.run("dummy", case_id="null_value_reaches_user", **configured)
+    records = read(os.path.join(configured["results_dir"], "dummy.jsonl"))
+
+    assert [c["metadata"]["autopsy_attempt"] for c in seen] == [1, 2, 3, 4, 5]
+    assert {c["metadata"]["autopsy_batch_id"] for c in seen} == {records[0]["batch_id"]}
+    assert all(c["metadata"]["autopsy_case_id"] == "null_value_reaches_user" for c in seen)
+    assert all(c["metadata"]["autopsy_target_sha"] == records[0]["target_sha"] for c in seen)
+    assert all("case:null_value_reaches_user" in c["tags"] for c in seen)
+    assert seen[2]["run_name"] == "dummy/null_value_reaches_user 3/5"

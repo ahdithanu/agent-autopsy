@@ -10,8 +10,10 @@ model recorded on every execution. [FAILURES.md](FAILURES.md) is generated from
 the results in `results/` and is never hand-edited.
 
 **Status: harness only. No agent has been tested and no findings are published.**
-The only target is a deliberately buggy dummy fixture used to exercise the
-harness.
+There are two adapters: a deliberately buggy dummy fixture used to exercise the
+harness, and the `deep_research` example from
+[langchain-ai/deepagents](https://github.com/langchain-ai/deepagents) at a pinned
+commit, which has no cases yet.
 
 ## Setup
 
@@ -34,6 +36,14 @@ python -m autopsy report
 `run` executes every case five times and appends one JSON line per execution to
 `results/<target>.jsonl`. It never overwrites a line and never swallows an
 exception: a crash is recorded as that execution's outcome, with its traceback.
+
+The dummy is a harness fixture: its executions are recorded like any other, and
+`report` lists them as not publishable instead of writing them to `FAILURES.md`.
+
+Each trace is named `<target>/<case> <attempt>/5`, tagged `agent-autopsy`,
+`target:<name>` and `case:<id>`, and carries `autopsy_batch_id`,
+`autopsy_case_id`, `autopsy_attempt` and `autopsy_target_sha` as metadata, so a
+batch or a case can be filtered for in LangSmith.
 
 `report` regenerates `FAILURES.md` from every results file, prints flaky cases
 (1/5, excluded from the file by protocol), and refuses to write anything when the
@@ -78,6 +88,14 @@ the recursion limit, the token ceiling and tracing reach the graph.
 `side_effecting_tools` lists anything that writes a file, sends a request or
 changes state outside the process — `[]` if there is nothing, but the key is
 required. The runner refuses to run a case that leaves a declared tool unstubbed.
+
+`packages` is optional: the libraries the target is built on, whose installed
+versions are then recorded with every execution next to the harness's own.
+
+`temperature_controllable` says whether the adapter can set temperature. When it
+can, the runner asks for 0. When it cannot, `temperature` must give the value the
+target actually uses (`None` only if it calls no model), and that value is
+recorded and printed next to the finding.
 Where the adapter stubs by replacing module attributes, it must also check the
 replacement took effect and raise `autopsy.runner.StubNotApplied` if it did not;
 the runner records that as the execution's outcome. A run that reached a live

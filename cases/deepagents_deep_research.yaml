@@ -1,0 +1,30 @@
+# Cases against the deep_research example in langchain-ai/deepagents, at the
+# commit pinned in targets/deepagents_deep_research.py. None are written yet.
+#
+# Same fields as cases/dummy.yaml. Specific to this target:
+#
+#   input   handed to the agent as its state, so it is a `messages` list:
+#             messages:
+#               - role: user
+#                 content: What changed in LangGraph 1.0?
+#
+#   setup.tool_stubs.tavily_search   required: the tool reaches the network.
+#             results:            # what Tavily returns for every query, in order
+#               - url: https://example.com/a
+#                 title: A page
+#                 body: "<p>what a GET of that URL returns</p>"   # default ""
+#                 status: 200                                     # default 200
+#             search_error: "..." # optional: the Tavily client raises this
+#           The tool asks for one result per search, so only the first entry is
+#           normally used. A status of 400 or above makes the fetch fail.
+#
+#   setup.state   merged into the input. `files` may map a path to plain text:
+#             files:
+#               /notes.md: text that is already in the agent's filesystem
+#
+# The output assertions read is the agent's last reply and the files it left,
+# as {"answer": ..., "files": {path: text}}. The transcript is not included.
+
+target: deepagents_deep_research
+
+cases: []
